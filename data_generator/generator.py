@@ -1,36 +1,27 @@
-import json
-import time
-import random
-import uuid
-from datetime import datetime
-from kafka import KafkaProducer
+import time, json, pandas as pd, numpy as np, os
+from confluent_kafka import Producer
 
-# Kafka configuration
-KAFKA_BROKER = 'localhost:9092'
-TOPIC = 'fraud_transactions'
+producer = Producer({'bootstrap.servers': 'localhost:9092'})
 
-# Initialize Kafka producer
-producer = KafkaProducer(
-    bootstrap_servers=[KAFKA_BROKER],
-    value_serializer=lambda v: json.dumps(v).encode('utf-8')
-)
+def stream_transactions():
+    BASE = "/workspaces/realtime-fraud-engine/data_generator"
+    df = pd.read_csv(os.path.join(BASE, 'unseen_test_data.csv')).drop('Class', axis=1)
 
-def generate_transaction():
-    return {
-        'transaction_id': str(uuid.uuid4()),
-        'user_id': random.randint(1000, 9999),
-        'amount': round(random.uniform(10.0, 10000.0), 2),
-        'location': random.choice(['New York', 'Los Angeles', 'Chicago', 'Houston', 'Phoenix']),
-        'timestamp': datetime.utcnow().isoformat()
-    }
-
-def main():
-    print("Starting data generator...")
-    while True:
-        transaction = generate_transaction()
-        producer.send(TOPIC, transaction)
-        print(f"Sent transaction: {transaction}")
-        time.sleep(0.5)
+    print(f"🚀 Streaming transactions...")
+    
+    for _, row in df.iterrows():
+        try:
+            transaction = row.to_dict()
+            # Add stochastic noise
+            for v_col in [f'V{i}' for i in range(1, 29)]:
+                transaction[v_col] += np.random.normal(0, 0.01)
+            
+            payload = json.dumps(transaction)
+            producer.produce('fraud_transactions', payload.encode('utf-8'))
+            producer.flush() # Ensure it leaves the generator immediately
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"Generator Error: {e}")
 
 if __name__ == "__main__":
-    main()
+    stream_transactions()

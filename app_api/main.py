@@ -36,6 +36,14 @@ RISK_GAUGE.set(0.0)
 
 app = FastAPI()
 
+ """
+    Core Inference Engine: 
+    1. Consumes raw transaction events from Kafka.
+    2. Performs feature engineering using a serialized StandardScaler.
+    3. Executes a hybrid decision logic (ML Probability + Redis Behavioral Velocity).
+    4. Persists the audit trail to PostgreSQL.
+    """
+
 def engine_worker():
     time.sleep(15) # Wait for infrastructure
     Base.metadata.create_all(bind=engine)

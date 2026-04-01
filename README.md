@@ -1,5 +1,7 @@
 # 🛡️ Sentinel: Enterprise Real-Time Fraud Detection Engine
 
+![Operational Dashboard](Grafana%20Realtime%20Viz.png)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://www.docker.com/)

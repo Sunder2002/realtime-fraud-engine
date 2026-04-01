@@ -1,0 +1,15 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Large Data (Handled by LFS or kept local)
+*.csv
+!training_pipeline/creditcard.csv
+
+# Model Artifacts (Handled by LFS)
+artifacts/*.xgb
+artifacts/*.pkl
+
+# Environment & IDE
+.env
+.vscode/

@@ -1,9 +1,3 @@
-This is the final, polished **README.md** designed to make you look like a Lead Engineer. It explains the complex "Sentinel" system in a way that a 5th grader can understand, while using the technical language that makes HR managers want to hire you immediately.
-
-Copy the entire block below and replace everything in your current `README.md` file.
-
-***
-
 # 🛡️ Sentinel: Enterprise Real-Time Fraud Detection Engine
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)

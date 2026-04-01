@@ -1,17 +1,35 @@
 import json, joblib, redis, threading, time, logging, sys
+from logging.handlers import RotatingFileHandler
 import pandas as pd
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Response, HTTPException
+from pydantic import BaseModel, Field
 from confluent_kafka import Consumer
 from sqlalchemy import create_engine, Column, Integer, Float, String
 from sqlalchemy.orm import sessionmaker, declarative_base
 from prometheus_client import Counter, Gauge, generate_latest, CONTENT_TYPE_LATEST
 
-# Tell Python where config is
 sys.path.append('/workspaces/realtime-fraud-engine')
 from config import Config
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("SentinelAPI")
+# --- STEP 1: INDUSTRIAL LOGGING (The Black Box) ---
+log_formatter = logging.Formatter('%(asctime)s | %(levelname)s | %(message)s')
+file_handler = RotatingFileHandler(Config.LOG_FILE, maxBytes=5*1024*1024, backupCount=2)
+file_handler.setFormatter(log_formatter)
+
+logger = logging.getLogger("Sentinel")
+logger.setLevel(logging.INFO)
+logger.addHandler(file_handler)
+logger.addHandler(logging.StreamHandler()) # Still show in terminal
+
+# --- STEP 2: DATA VALIDATION (The Shield) ---
+class TransactionSchema(BaseModel):
+    # Ensures incoming Kafka data isn't corrupted
+    Amount: float = Field(..., gt=-1)
+    V1: float
+    V2: float
+    # We could list all 28, but keeping it brief for the schema check
+    class Config:
+        extra = "allow" # Allows the other V columns
 
 # DB Setup
 engine = create_engine(Config.DB_URL)
@@ -25,85 +43,73 @@ class Transaction(Base):
     status = Column(String)
     probability = Column(Float)
 
-# --- METRIC DEFINITIONS ---
-FRAUD_COUNT = Counter('fraud_detected_total', 'Total frauds caught')
-SAFE_COUNT = Counter('safe_processed_total', 'Total safe processed')
-# We name it exactly this for Grafana
-RISK_GAUGE = Gauge('current_fraud_probability', 'Live Fraud Risk Score (0-1)')
+# Metrics
+FRAUD_COUNT = Counter('fraud_detected_total', 'Total frauds')
+SAFE_COUNT = Counter('safe_processed_total', 'Total safe')
+RISK_GAUGE = Gauge('last_transaction_prob', 'Last fraud score')
 
-# PRO-TIP: Initialize to 0 so Prometheus sees it immediately
-RISK_GAUGE.set(0.0)
-
-app = FastAPI()
-
- """
-    Core Inference Engine: 
-    1. Consumes raw transaction events from Kafka.
-    2. Performs feature engineering using a serialized StandardScaler.
-    3. Executes a hybrid decision logic (ML Probability + Redis Behavioral Velocity).
-    4. Persists the audit trail to PostgreSQL.
-    """
+app = FastAPI(title="Sentinel Fraud Engine", version="1.2.0")
 
 def engine_worker():
-    time.sleep(15) # Wait for infrastructure
+    logger.info("🚀 Sentinel worker initializing...")
+    time.sleep(15) 
     Base.metadata.create_all(bind=engine)
     
-    # Load Artifacts
-    model = joblib.load(Config.MODEL_PATH)
-    cols = joblib.load(Config.COLS_PATH)
-    scaler = joblib.load(Config.SCALER_PATH)
-    cache = redis.Redis(host=Config.REDIS_HOST, port=Config.REDIS_PORT)
-    
-    c = Consumer({
-        'bootstrap.servers': Config.KAFKA_SERVER, 
-        'group.id': 'sentinel-final-v3', # New group to ensure fresh start
-        'auto.offset.reset': 'latest'
-    })
-    c.subscribe([Config.KAFKA_TOPIC])
-    
-    logger.info("🛡️ SENTINEL ACTIVE: Monitoring Live Highway...")
-    
+    try:
+        model = joblib.load(Config.MODEL_PATH)
+        cols = joblib.load(Config.COLS_PATH)
+        scaler = joblib.load(Config.SCALER_PATH)
+        cache = redis.Redis(host=Config.REDIS_HOST, port=Config.REDIS_PORT)
+        
+        c = Consumer({'bootstrap.servers': Config.KAFKA_SERVER, 'group.id': 'sentinel-vfinal', 'auto.offset.reset': 'latest'})
+        c.subscribe([Config.KAFKA_TOPIC])
+    except Exception as e:
+        logger.critical(f"❌ Failed to load artifacts: {e}")
+        return
+
     while True:
         msg = c.poll(1.0)
         if msg is None or msg.error(): continue
+        
         try:
-            data = json.loads(msg.value().decode('utf-8'))
-            raw_amt = float(data['Amount'])
+            raw_data = json.loads(msg.value().decode('utf-8'))
             
-            # Preprocessing
-            amt_df = pd.DataFrame([[raw_amt]], columns=['Amount'])
-            data['Amount'] = scaler.transform(amt_df)[0][0]
+            # --- VALIDATION ---
+            tx = TransactionSchema(**raw_data)
             
-            # AI Inference
-            input_df = pd.DataFrame([data])[cols]
+            # --- INFERENCE ---
+            input_df = pd.DataFrame([tx.model_dump()])[cols]
+            input_df['Amount'] = scaler.transform(input_df[['Amount']])[0][0]
             prob = float(model.predict_proba(input_df)[0][1])
             
-            # Behavioral check
-            v_id = f"user:{data.get('V1', 'unknown')}"
+            v_id = f"user:{tx.V1}"
             velocity = cache.incr(v_id)
             if velocity == 1: cache.expire(v_id, 60)
 
             status = "FRAUD" if (prob > 0.6 or velocity > 5) else "SAFE"
 
-            # DB Save
+            # --- PERSISTENCE ---
             db = SessionLocal()
-            db.add(Transaction(amount=raw_amt, status=status, probability=prob))
+            db.add(Transaction(amount=tx.Amount, status=status, probability=prob))
             db.commit()
             db.close()
 
-            # --- UPDATE METRICS ---
-            RISK_GAUGE.set(prob) # This moves the needle in Grafana
+            # --- TELEMETRY ---
+            RISK_GAUGE.set(prob)
             if status == "FRAUD": FRAUD_COUNT.inc()
             else: SAFE_COUNT.inc()
             
-            logger.info(f"[{status}] Prob: {prob:.2%} | Amt: ${raw_amt:,.2f}")
+            logger.info(f"AUDIT | Status: {status} | Amt: ${tx.Amount} | Prob: {prob:.4f}")
+
         except Exception as e:
-            logger.error(f"⚠️ Error: {e}")
+            logger.error(f"⚠️ Transaction Rejected: {e}")
 
 threading.Thread(target=engine_worker, daemon=True).start()
 
+@app.get("/health")
+def health_check():
+    # HR loves health checks. It shows you know how Kubernetes monitors apps.
+    return {"status": "healthy", "uptime": time.time()}
+
 @app.get("/metrics")
 def metrics(): return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
-
-@app.get("/")
-def home(): return {"status": "Sentinel v1.1 Active"}

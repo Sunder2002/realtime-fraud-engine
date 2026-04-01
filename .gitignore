@@ -1,15 +1,9 @@
-# Python bytecode
 __pycache__/
 *.py[cod]
-
-# Large Data (Handled by LFS or kept local)
-*.csv
-!training_pipeline/creditcard.csv
-
-# Model Artifacts (Handled by LFS)
-artifacts/*.xgb
-artifacts/*.pkl
-
-# Environment & IDE
 .env
 .vscode/
+# We want to see the CSV headers, but not the 143MB raw data
+training_pipeline/creditcard.csv
+training_pipeline/cleaned_data.csv
+data_stream/unseen_test_data.csv
+# DO NOT put artifacts/ here anymore. We want them on GitHub.

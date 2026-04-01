@@ -1,3 +1,4 @@
+version: '3.8'
 services:
   kafka:
     image: apache/kafka:3.7.0
@@ -12,6 +13,7 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
 
   postgres_db:
     image: postgres:15
@@ -43,5 +45,4 @@ services:
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     volumes:
-      # This part auto-loads the dashboard so it's "Ready to show"
-      - ./grafana_datasource.yaml:/etc/grafana/provisioning/datasources/datasource.yaml
+      - ../deploy/grafana_datasource.yaml:/etc/grafana/provisioning/datasources/datasource.yaml
